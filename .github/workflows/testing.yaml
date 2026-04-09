@@ -1,0 +1,113 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+name: "🧪 Testing"
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-sed-method:
+    name: "Test sed method"
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Harden the runner used by this workflow
+      # yamllint disable-line rule:line-length
+      - uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.16.1
+        with:
+          egress-policy: audit
+
+      # yamllint disable-line rule:line-length
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: "Create test Maven project"
+        shell: bash
+        run: |
+          # Create a test POM with SNAPSHOT version
+          cat > pom.xml << 'POMEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                   http://maven.apache.org/xsd/maven-4.0.0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>org.example</groupId>
+              <artifactId>test-project</artifactId>
+              <version>1.2.3-SNAPSHOT</version>
+              <packaging>jar</packaging>
+          </project>
+          POMEOF
+          git add pom.xml
+          git commit -m "Add test POM"
+
+      - name: "Run maven-stage-prep (sed method)"
+        id: stage-prep
+        uses: ./
+        with:
+          project-name: "test-project"
+          gerrit-branch: "main"
+          version-method: "sed"
+
+      - name: "Verify outputs"
+        shell: bash
+        # yamllint disable rule:line-length
+        run: |
+          echo "Release version: ${{ steps.stage-prep.outputs.release-version }}"
+          echo "Patch path: ${{ steps.stage-prep.outputs.patch-path }}"
+          echo "Bundle path: ${{ steps.stage-prep.outputs.bundle-path }}"
+          echo "Taglist path: ${{ steps.stage-prep.outputs.taglist-path }}"
+
+          # Verify SNAPSHOT was removed
+          if grep -q "SNAPSHOT" pom.xml; then
+              echo "ERROR: SNAPSHOT still found in pom.xml"
+              exit 1
+          fi
+          echo "✅ SNAPSHOT successfully removed from pom.xml"
+
+          # Verify release version output
+          if [ -z "${{ steps.stage-prep.outputs.release-version }}" ]; then
+              echo "ERROR: release-version output is empty"
+              exit 1
+          fi
+          echo "✅ Release version output set: ${{ steps.stage-prep.outputs.release-version }}"
+
+          # Verify patch file exists
+          if [ ! -f "${{ steps.stage-prep.outputs.patch-path }}" ]; then
+              echo "ERROR: Patch file not found"
+              exit 1
+          fi
+          echo "✅ Patch file created"
+
+          # Verify bundle file exists
+          if [ ! -f "${{ steps.stage-prep.outputs.bundle-path }}" ]; then
+              echo "ERROR: Bundle file not found"
+              exit 1
+          fi
+          echo "✅ Bundle file created"
+
+          # Verify taglist file exists
+          if [ ! -f "${{ steps.stage-prep.outputs.taglist-path }}" ]; then
+              echo "ERROR: Taglist file not found"
+              exit 1
+          fi
+          echo "✅ Taglist file created"
+
+          echo "All tests passed! ✅"
+        # yamllint enable rule:line-length

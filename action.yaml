@@ -1,0 +1,160 @@
+---
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# maven-stage-prep-action
+name: "📦 Maven Stage Prep"
+description: "Prepare Maven project for staging release"
+author: "Anil Belur <askb23@gmail.com>"
+
+inputs:
+  pom-file:
+    description: "Path to root POM file"
+    required: false
+    default: "pom.xml"
+  version-method:
+    description: "Method to remove SNAPSHOT: sed or versions-plugin"
+    required: false
+    default: "sed"
+  version-override:
+    description: "Explicit version for versions-plugin newVersion parameter"
+    required: false
+    default: ""
+  project-name:
+    description: "Project name for patch/bundle file naming"
+    required: true
+  gerrit-branch:
+    description: "Branch name for git format-patch base ref"
+    required: true
+  java-version:
+    description: "OpenJDK version (used only with versions-plugin method)"
+    required: false
+    default: "21"
+  mvn-version:
+    description: "Maven version (used only with versions-plugin method)"
+    required: false
+    default: "3.9.11"
+
+outputs:
+  release-version:
+    description: "De-SNAPSHOTted release version string"
+    value: ${{ steps.prep.outputs.release-version }}
+  patch-path:
+    description: "Path to git format-patch file"
+    value: ${{ steps.prep.outputs.patch-path }}
+  bundle-path:
+    description: "Path to git bundle file"
+    value: ${{ steps.prep.outputs.bundle-path }}
+  taglist-path:
+    description: "Path to taglist.log file"
+    value: ${{ steps.prep.outputs.taglist-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Setup Java (versions-plugin only)"
+      if: ${{ inputs.version-method == 'versions-plugin' }}
+      # yamllint disable-line rule:line-length
+      uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: "temurin"
+
+    - name: "Setup Maven (versions-plugin only)"
+      if: ${{ inputs.version-method == 'versions-plugin' }}
+      # yamllint disable-line rule:line-length
+      uses: s4u/setup-maven-action@6c4e9964d4ecb8f1026310cd8618791fd51a8016 # v1.19.0
+      with:
+        java-version: ${{ inputs.java-version }}
+        maven-version: ${{ inputs.mvn-version }}
+        checkout-enabled: false
+
+    - name: "Prepare Maven staging release"
+      id: prep
+      shell: bash
+      env:
+        INPUT_POM_FILE: ${{ inputs.pom-file }}
+        INPUT_VERSION_METHOD: ${{ inputs.version-method }}
+        INPUT_VERSION_OVERRIDE: ${{ inputs.version-override }}
+        INPUT_PROJECT_NAME: ${{ inputs.project-name }}
+        INPUT_GERRIT_BRANCH: ${{ inputs.gerrit-branch }}
+      # yamllint disable rule:line-length
+      run: |
+        # SPDX-License-Identifier: Apache-2.0
+        set -euo pipefail
+
+        echo "---> maven-stage-prep: Preparing Maven project for staging release"
+
+        POM_FILE="${INPUT_POM_FILE}"
+        VERSION_METHOD="${INPUT_VERSION_METHOD}"
+        VERSION_OVERRIDE="${INPUT_VERSION_OVERRIDE}"
+        PROJECT_NAME="${INPUT_PROJECT_NAME}"
+        GERRIT_BRANCH="${INPUT_GERRIT_BRANCH}"
+
+        PATCH_DIR="${GITHUB_WORKSPACE}/archives/patches"
+        mkdir -p "$PATCH_DIR"
+
+        # Step 1: Record commit hash for tagging (matches JJB taglist.log format)
+        echo "${PROJECT_NAME} $(git rev-parse --verify HEAD)" \
+            | tee -a "$PATCH_DIR/taglist.log"
+
+        # Step 2: Remove -SNAPSHOT from version
+        if [ "$VERSION_METHOD" = "versions-plugin" ]; then
+            echo "INFO: Using Maven versions-plugin to update versions"
+            MVN_ARGS=()
+            if [ -n "$VERSION_OVERRIDE" ]; then
+                MVN_ARGS+=("-DnewVersion=${VERSION_OVERRIDE}")
+            fi
+            mvn versions:set "${MVN_ARGS[@]}" \
+                versions:update-child-modules \
+                versions:commit \
+                -f "$POM_FILE"
+        else
+            echo "INFO: Using sed to strip -SNAPSHOT from POM files"
+            find . -name "*.xml" -print0 | xargs -0 sed -i 's/-SNAPSHOT//g'
+        fi
+
+        # Step 3: Extract release version from POM
+        RELEASE_VERSION=""
+        if command -v mvn &>/dev/null; then
+            RELEASE_VERSION=$(mvn help:evaluate \
+                -Dexpression=project.version \
+                -q -DforceStdout \
+                -f "$POM_FILE" 2>/dev/null) || true
+        fi
+        if [ -z "$RELEASE_VERSION" ]; then
+            RELEASE_VERSION=$(grep -m1 '<version>' "$POM_FILE" \
+                | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
+        fi
+        echo "INFO: Release version: $RELEASE_VERSION"
+
+        # Step 4: Git commit the de-SNAPSHOTted POMs
+        git config user.email "askb23@gmail.com"
+        git config user.name "Anil Belur"
+        git commit -am "Release ${PROJECT_NAME} ${RELEASE_VERSION}"
+
+        # Step 5: Create format-patch and bundle
+        SAFE_NAME="${PROJECT_NAME//\//-}"
+        git format-patch --stdout "origin/${GERRIT_BRANCH}" \
+            > "$PATCH_DIR/${SAFE_NAME}.patch"
+        git bundle create "$PATCH_DIR/${SAFE_NAME}.bundle" \
+            "origin/${GERRIT_BRANCH}..HEAD"
+
+        # Step 6: Set outputs
+        echo "release-version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "patch-path=${PATCH_DIR}/${SAFE_NAME}.patch" >> "$GITHUB_OUTPUT"
+        echo "bundle-path=${PATCH_DIR}/${SAFE_NAME}.bundle" >> "$GITHUB_OUTPUT"
+        echo "taglist-path=${PATCH_DIR}/taglist.log" >> "$GITHUB_OUTPUT"
+
+        # Step 7: Summary
+        {
+            echo "## Maven Stage Prep ✅"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Project** | ${PROJECT_NAME} |"
+            echo "| **Version** | ${RELEASE_VERSION} |"
+            echo "| **Method** | ${VERSION_METHOD} |"
+            echo "| **Branch** | ${GERRIT_BRANCH} |"
+        } >> "$GITHUB_STEP_SUMMARY"
+      # yamllint enable rule:line-length
