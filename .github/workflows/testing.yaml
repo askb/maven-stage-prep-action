@@ -76,10 +76,10 @@ jobs:
         shell: bash
         # yamllint disable rule:line-length
         run: |
-          echo "Release version: ${{ steps.stage-prep.outputs.release_version }}"
-          echo "Patch path: ${{ steps.stage-prep.outputs.patch_path }}"
-          echo "Bundle path: ${{ steps.stage-prep.outputs.bundle_path }}"
-          echo "Taglist path: ${{ steps.stage-prep.outputs.taglist_path }}"
+          echo "Release version: ${STEPS_STAGE_PREP_OUTPUTS_RELEASE_VERSION}"
+          echo "Patch path: ${STEPS_STAGE_PREP_OUTPUTS_PATCH_PATH}"
+          echo "Bundle path: ${STEPS_STAGE_PREP_OUTPUTS_BUNDLE_PATH}"
+          echo "Taglist path: ${STEPS_STAGE_PREP_OUTPUTS_TAGLIST_PATH}"
 
           # Verify SNAPSHOT was removed
           if grep -q "SNAPSHOT" pom.xml; then
@@ -89,32 +89,37 @@ jobs:
           echo "✅ SNAPSHOT successfully removed from pom.xml"
 
           # Verify release version output
-          if [ -z "${{ steps.stage-prep.outputs.release_version }}" ]; then
+          if [ -z "${STEPS_STAGE_PREP_OUTPUTS_RELEASE_VERSION}" ]; then
               echo "ERROR: release_version output is empty"
               exit 1
           fi
-          echo "✅ Release version output set: ${{ steps.stage-prep.outputs.release_version }}"
+          echo "✅ Release version output set: ${STEPS_STAGE_PREP_OUTPUTS_RELEASE_VERSION}"
 
           # Verify patch file exists
-          if [ ! -f "${{ steps.stage-prep.outputs.patch_path }}" ]; then
+          if [ ! -f "${STEPS_STAGE_PREP_OUTPUTS_PATCH_PATH}" ]; then
               echo "ERROR: Patch file not found"
               exit 1
           fi
           echo "✅ Patch file created"
 
           # Verify bundle file exists
-          if [ ! -f "${{ steps.stage-prep.outputs.bundle_path }}" ]; then
+          if [ ! -f "${STEPS_STAGE_PREP_OUTPUTS_BUNDLE_PATH}" ]; then
               echo "ERROR: Bundle file not found"
               exit 1
           fi
           echo "✅ Bundle file created"
 
           # Verify taglist file exists
-          if [ ! -f "${{ steps.stage-prep.outputs.taglist_path }}" ]; then
+          if [ ! -f "${STEPS_STAGE_PREP_OUTPUTS_TAGLIST_PATH}" ]; then
               echo "ERROR: Taglist file not found"
               exit 1
           fi
           echo "✅ Taglist file created"
 
           echo "All tests passed! ✅"
-        # yamllint enable rule:line-length
+        env:
+          STEPS_STAGE_PREP_OUTPUTS_RELEASE_VERSION: ${{ steps.stage-prep.outputs.release_version }}
+          STEPS_STAGE_PREP_OUTPUTS_PATCH_PATH: ${{ steps.stage-prep.outputs.patch_path }}
+          STEPS_STAGE_PREP_OUTPUTS_BUNDLE_PATH: ${{ steps.stage-prep.outputs.bundle_path }}
+          STEPS_STAGE_PREP_OUTPUTS_TAGLIST_PATH: ${{ steps.stage-prep.outputs.taglist_path }}
+          # yamllint enable rule:line-length
